@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Financial Records</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: "hsl(240 5.9% 10%)",
+            income: "#10b981",
+            expense: "#ef4444",
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-gray-100 font-sans">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // --- KONFIGURASI FIREBASE ---
+    // PENTING: GANTI INI DENGAN CONFIG KAMU SENDIRI
+    const firebaseConfig = {
+      apiKey: "AIzaSyDxxxxxx-xxxxxxxxxxxxxxxx",
+      authDomain: "accountingproject01.firebaseapp.com",
+      projectId: "accountingproject01",
+      storageBucket: "accountingproject01.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "1:12345678:web:xxxxxxxxxxx"
+    };
+
+    // Initialize Firebase
+    if (!firebase.apps.length) 
+        firebase.initializeApp(firebaseConfig);
+    }
+
+    const db = firebase.firestore();
+    db.settings({
+      experimentalForceLongPolling: true,
+      useFetchStreams: false
+    });
+    
+
+
+    // --- REACT COMPONENTS ---
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const SummaryCard = ({ title, value, icon, type }) => {
+      const colorClass = type === "income" ? "text-income" : type === "expense" ? "text-expense" : "text-gray-800";
+      const bgIcon = type === "income" ? "bg-green-100 text-green-600" : type === "expense" ? "bg-red-100 text-red-600" : "bg-gray-200 text-gray-700";
+
+      return (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-500 mb-1">{title}</p>
+            <h3 className={`text-2xl font-bold ${colorClass}`}>{value}</h3>
+          </div>
+          <div className={`p-3 rounded-full ${bgIcon}`}>
+            <i data-lucide={icon} className="w-6 h-6"></i>
+          </div>
+        </div>
+      );
+    };
+
+    const App = () => {
+      const [transactions, setTransactions] = useState([]);
+      const [loading, setLoading] = useState(true);
+
+      // Form States
+      const [desc, setDesc] = useState("");
+      const [amount, setAmount] = useState("");
+      const [type, setType] = useState("expense");
+      const [isSaving, setIsSaving] = useState(false);
+
+      const chartRef = useRef(null);
+      const chartInstance = useRef(null);
+
+      // 1. READ DATA
+      useEffect(() => {
+        const unsubscribe = db.collection("transactions")
+          .orderBy("createdAt", "desc")
+          .onSnapshot((snapshot) => {
+            const fetchedData = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }));
+            setTransactions(fetchedData);
+            setLoading(false);
+          }, (error) => {
+            console.error("Error fetching data: ", error);
+            setLoading(false);
+          });
+        return () => unsubscribe();
+      }, []);
+
+      // 2. CREATE DATA
+      const addTransaction = async () => {
+        try {
+          setLoading(true);
+
+          await db.collection("transactions").add({
+            desc,
+            amount: Number(amount),
+            type,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+
+          // reset form (opsional)
+          setDesc("");
+          setAmount("");
+          setType("");
+
+        } catch (error) {
+          console.error("Gagal simpan:", error);
+          alert("Gagal menyimpan transaksi");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+
+
+      // 3. DELETE DATA
+      const handleDelete = async (id) => {
+        if (confirm("Yakin ingin menghapus?")) {
+          try {
+            await db.collection("transactions").doc(id).delete();
+          } catch (error) {
+            console.error("Error removing document: ", error);
+          }
+        }
+      };
+
+      const stats = useMemo(() => {
+        const income = transactions.filter(t => t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
+        const expense = transactions.filter(t => t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
+        return { income, expense, balance: income - expense };
+      }, [transactions]);
+
+      const formatRupiah = (num) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(num);
+
+      useEffect(() => {
+        lucide.createIcons();
+
+        if (chartRef.current) {
+          if (chartInstance.current) chartInstance.current.destroy();
+          const ctx = chartRef.current.getContext('2d');
+          chartInstance.current = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+              labels: ['Pemasukan', 'Pengeluaran'],
+              datasets: [{
+                data: [stats.income || 0, stats.expense || 0],
+                backgroundColor: ['#10b981', '#ef4444'],
+                borderWidth: 0
+              }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+          });
+        }
+      }, [stats, loading]);
+
+      return (
+        <div className="container mx-auto px-4 py-8 max-w-5xl">
+          <header className="mb-8">
+            <h1 className="text-3xl font-bold text-primary">Keuangan</h1>
+          </header>
+
+          {loading ? (
+            <div className="text-center py-10">Mengambil data dari database...</div>
+          ) : (
+            // PERBAIKAN: Mengganti <> dengan <React.Fragment>
+            <React.Fragment>
+              {/* Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <SummaryCard title="Total Saldo" value={formatRupiah(stats.balance)} icon="wallet" type="neutral" />
+                <SummaryCard title="Pemasukan" value={formatRupiah(stats.income)} icon="trending-up" type="income" />
+                <SummaryCard title="Pengeluaran" value={formatRupiah(stats.expense)} icon="trending-down" type="expense" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Kiri: Grafik & Form */}
+                <div className="lg:col-span-2 space-y-8">
+                  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                    <h3 className="font-semibold mb-4">Analisis</h3>
+                    <div className="h-64"><canvas ref={chartRef}></canvas></div>
+                  </div>
+
+                  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                    <h3 className="font-semibold mb-4 text-lg">Tambah Transaksi</h3>
+                    <form onSubmit={addTransaction} className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Deskripsi</label>
+                          <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Cth: Gajian" required />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Jumlah (Rp)</label>
+                          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" required />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Tipe</label>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="type" value="income" checked={type === 'income'} onChange={() => setType('income')} className="accent-green-500" /> Pemasukan</label>
+                          <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="type" value="expense" checked={type === 'expense'} onChange={() => setType('expense')} className="accent-red-500" /> Pengeluaran</label>
+                        </div>
+                      </div>
+                      <button disabled={isSaving} className="w-full bg-primary text-white py-2 rounded font-medium hover:bg-black/90 transition disabled:opacity-50">
+                        {isSaving ? "Menyimpan ke Cloud..." : "Simpan Transaksi"}
+                      </button>
+                    </form>
+                  </div>
+                </div>
+
+                {/* Kanan: List Riwayat */}
+                <div className="lg:col-span-1">
+                  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 h-full">
+                    <h3 className="font-semibold mb-4 text-lg">Riwayat (Real-time)</h3>
+                    <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                      {transactions.length === 0 && <p className="text-gray-400 text-sm">Belum ada data di database.</p>}
+
+                      {transactions.map((t) => (
+                        <div key={t.id} className="group flex justify-between items-center p-3 hover:bg-gray-50 rounded-lg border-b border-gray-100 relative">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                              <i data-lucide={t.type === 'income' ? 'arrow-up' : 'arrow-down'} className="w-4 h-4"></i>
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{t.desc}</p>
+                              <p className="text-xs text-gray-400">{t.date}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className={`font-semibold text-sm block ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                              {t.type === 'income' ? '+' : '-'} {formatRupiah(t.amount)}
+                            </span>
+                            <button onClick={() => handleDelete(t.id)} className="text-xs text-red-400 hover:text-red-600 mt-1 opacity-0 group-hover:opacity-100 transition">Hapus</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </React.Fragment>
+            // END PERBAIKAN
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+
+</html>
